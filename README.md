@@ -1,138 +1,292 @@
-# opensearch-query-gateway
+# OpenSearch Query Gateway
 
-A gateway service that accepts queries in its own query language,
-parses, normalises and validates them using an embedded Prolog rule engine,
-converts them into OpenSearch Query DSL and executes the query.
+A gateway for querying OpenSearch with support for multiple query layers, including a DCG-based parser, DSL builder, rule engine, and schema analysis.
 
-The architecture consists of a single service, internally divided into clearly separated packages
-(not microservices) — see `internal/`. The reason is explained in the README sections
-below and in the accompanying discussion: parsing → rules → build → execute is a single
-synchronous pipeline per request; splitting this into network services would simply
-add latency without providing any benefit.
+The project is designed for large-scale log search in OpenSearch, including environments with billions of records, where query clarity, validation, performance, and explainable schema inspection are important.
 
-## Structure
+---
 
-```
-cmd/gateway/ – entry point, wiring of all components
-internal/api/ – HTTP layer (router, handler)
-internal/config/ – loading configuration from YAML
-internal/parser/ – lexer/grammar for the custom query language (participle) → AST
-internal/rules/ – embedded Prolog rule engine (ichiban/prolog) on top of the AST
-internal/dslbuilder/ – conversion of the normalised AST to OpenSearch Query DSL
-internal/executor/ – client built on top of opensearch-go, executes the query itself
-configs/ – config.yaml
-deploy/ – Dockerfile, Docker Compose for local OpenSearch + gateway
-```
+## What the project solves
 
-## Single-request pipeline
+The goal of this project is to make OpenSearch easier to work with so that users and other systems do not need to manually assemble complex JSON queries.
 
-```
-POST /v1/search {‘query’: ‘tag:golang AND published_at:[2024-01-01 TO 2024-12-31]’}
-      │
-      ▼
-parser.Parse → AST (Clauses)
-      │
-      ▼
-rules.NormalizeField → field aliases (field_alias/2 in bootstrap.pl)
-rules.Validate → guards over the AST (valid_clause/3 in bootstrap.pl)
-      │
-      ▼
-dslbuilder.Build → map[string]interface{} (OpenSearch query DSL)
-      │
-      ▼
-executor.Search → executes the query via opensearch-go
-      │
-      ▼
-JSON response to the client
+The project provides:
+
+- a **DCG parser** for readable query syntax,
+- a **DSL builder** that converts queries into OpenSearch Query DSL,
+- a **rules engine** for transformations and validations,
+- a **schema analyzer** for index introspection and human-readable field overviews,
+- an **API gateway** for exposing the functionality over HTTP.
+
+---
+
+## Who it is for
+
+- backend developers who need a safe and standardized way to query OpenSearch,
+- analysts and colleagues who do not know Prolog but need readable schema outputs,
+- teams working with large-scale log indices,
+- environments where validation, explain mode, and future visual builders matter.
+
+---
+
+## Core concepts
+
+### 1. DCG
+
+DCG is used as a readable query format that can be translated into an internal structure.
+
+Example:
+
+```prolog
+service:gateway and severity:error and last:15m
 ```
 
-## Running locally
+### 2. Prolog rules
+
+Prolog acts as the logical layer for rules, validation, and relationship inference.
+
+Internally it is used for:
+- query transformation,
+- schema validation,
+- explain mode,
+- inference over fields and index relations.
+
+### 3. OpenSearch DSL
+
+The final query is generated as standard OpenSearch Query DSL.
+
+### 4. Schema analyzer
+
+The schema analyzer reads OpenSearch mappings and returns a human-readable overview of fields, types, relationships, and recommendations.
+
+---
+
+## Repository layout
+
+```text
+bin/
+cmd/
+  gateway/
+  schema-export/
+configs/
+deploy/
+internal/
+  api/
+  config/
+  dcg/
+  dslbuilder/
+  executor/
+  parser/
+  rules/
+  schema/
+opensearch-query-gateway/
+README.md
+```
+
+### `cmd/gateway`
+
+Main HTTP service.
+
+### `cmd/schema-export`
+
+CLI tool that exports OpenSearch mappings into Prolog facts.
+
+### `internal/api`
+
+HTTP handlers, middleware, and router.
+
+### `internal/dcg`
+
+Lexer, parser, AST, and generator for DCG-like query syntax.
+
+### `internal/dslbuilder`
+
+Builds OpenSearch DSL from the internal query representation.
+
+### `internal/parser`
+
+A more general parser / grammar layer for query input.
+
+### `internal/rules`
+
+Prolog bootstrap and rule engine.
+
+### `internal/schema`
+
+OpenSearch mapping mapper, Prolog writer, and schema model.
+
+### `internal/executor`
+
+Communication with the OpenSearch cluster.
+
+---
+
+## Query processing flow
+
+```text
+Input from API / UI
+→ DCG or Prolog-like syntax
+→ parser
+→ AST
+→ rules / validation
+→ DSL builder
+→ OpenSearch Query DSL
+→ OpenSearch cluster
+→ response
+```
+
+---
+
+## Schema analyzer
+
+The schema analyzer reads OpenSearch mappings and converts them into:
+
+- readable JSON for humans,
+- Prolog facts for internal logic,
+- metadata for autocomplete and explain mode.
+
+The typical output includes:
+
+- index name,
+- total fields,
+- searchable fields,
+- aggregatable fields,
+- object and nested structures,
+- recommended field usage.
+
+---
+
+## Example use cases
+
+### Log search
+
+- errors in the last 15 minutes,
+- filtering by service, severity, or tenant,
+- full-text search over the message field.
+
+### Audit and security logs
+
+- finding changes by users,
+- tracing request paths and outcomes,
+- reviewing who did what and when.
+
+### Schema introspection
+
+- showing which fields an index contains,
+- identifying fields suitable for filtering and aggregation,
+- connecting to a visual builder or documentation layer.
+
+---
+
+## CLI tools
+
+### `schema-export`
+
+Exports OpenSearch mappings into Prolog facts.
+
+Example:
 
 ```bash
-docker compose -f deploy/docker-compose.yaml up -d opensearch
-go run ./cmd/gateway
+go run ./cmd/schema-export -in mapping.json -out schema.pl -root logs
 ```
 
-## Query language
+---
 
-The grammar (`internal/parser/ast.go`, `grammar.go`) is a recursive expression with
-the following precedence: `OR` < `AND` < `NOT` and support for nested parentheses:
+## Endpoints
 
+### `/search`
+
+Main query endpoint.
+
+### `/schema/introspect`
+
+Returns a human-readable JSON overview of an index schema.
+
+---
+
+## Example schema introspection response
+
+```json
+{
+  "index": "logs",
+  "purpose": "Application and audit log search",
+  "summary": {
+    "fields_total": 6,
+    "searchable": 4,
+    "aggregatable": 5,
+    "object_fields": 2,
+    "nested_fields": 0
+  },
+  "highlights": [
+    "Time-based filtering is supported.",
+    "Service and severity are ideal for filters and grouping.",
+    "Message supports full-text search."
+  ],
+  "fields": [
+    {
+      "path": "@timestamp",
+      "type": "date",
+      "searchable": true,
+      "aggregatable": true,
+      "notes": "Primary time filter"
+    }
+  ]
+}
 ```
-tag:golang → match
-title:jarn* → wildcard (* = any number of characters)
-code:a?c → wildcard (? = one character)
-title:‘hello world’ → match_phrase
-published_at:[2024-01-01 TO 2024-12-31] → range
-tag:golang status:published → implicit AND
- 
-(a space is sufficient)
-tag:golang AND status:published → explicit AND, same effect as above
-tag:golang OR tag:go → bool.should, minimum_should_match: 1
-tag:golang NOT status:archived → AND NOT, ‘AND’ can be omitted
-(tag:golang OR tag:go) AND NOT status:archived → arbitrary nesting within brackets
-tag:golang^2.5 → match with boost 2.5 (relevance weight)
-title:jarnik~2 → fuzzy query, edit distance 2
-title:jarnik~ → fuzzy query, fuzziness ‘AUTO’
-title:‘hello world’~3 → match_phrase with a tolerance of 3 (proximity)
-title:jarnik~2^1.5 → combined fuzzy + boost
-```
 
-### Boost (^N) and fuzzy/proximity (~N)
+---
 
-Both modifiers are optional and can be chained together (`~` before `^`,
-as in Lucene) with any type of value:
+## Why it fits large OpenSearch clusters
 
-- `^N` — boost, relevance weight. Works on words, phrases, wildcards and range
-  queries; if an error occurs or the number is invalid, 1 (neutral) is used.
-- `~N` on a word → fuzzy query (editing distance, typo tolerance).
-  
-Without a number (`~` without a value), `‘AUTO’` is used — OpenSearch selects
-  the distance based on the term’s length.
-- `~N` on a phrase → slop for `match_phrase` (how many extra shifts/spaces
-  between tokens are tolerated). Without a number, the default slop of 2 is used.
-- `~N` on a wildcard value (containing `*`/`?`) is ignored — OpenSearch
-does not combine fuzzy wildcards, but the boost is still applied.
-- `~N` on a range value is ignored (it makes no sense), but the boost is applied.
+This project is suitable for environments with billions of log documents because it:
 
-Detection of which value type the modifier belongs to is handled in `internal/dslbuilder/builder.go`
-within the `clause()` function. Group-level boost (`(expr)^2`) is not implemented —
-boost/fuzzy applies only to individual field:value clauses.
+- simplifies query creation and validation,
+- supports readable query syntax,
+- allows automatic rule-based rewriting,
+- provides a human-readable view of schema,
+- can grow into autocomplete, explain mode, and a visual builder.
 
-Wildcard values are detected in `dslbuilder` based on the presence of `*`/`?` and
-translated to an OpenSearch `wildcard` query — the glob syntax is identical, so
-it is not translated; only `case_insensitive: true` is added. Note: `wildcard` queries
-only work reliably on keyword/not-analysed fields, not on analysed
-text — check the mapping of the target field.
+---
 
-Further natural extensions (not yet implemented): fuzzy queries (`word~2`),
-boost (`word^2`), proximity phrases (`‘a b’~3`), default fields without the
-`field:` prefix. The grammar simply needs to be extended with another alternative in `Value`/`Clause`
-without affecting the rest of the pipeline.
+## What it brings to the team
 
-Regression tests are in `internal/parser/grammar_test.go` (parsing/precedence)
-and `internal/dslbuilder/builder_test.go` (resulting DSL) — run `make test`.
+### For developers
+- less manual JSON DSL assembly,
+- better validation and testability,
+- cleaner separation of responsibilities.
 
-## Notes on further extension
-- `internal/rules/bootstrap.pl` is where business rules belong
-(field aliases, allow-lists, type validation) — keep them separate from the Go code,
-so that you can change them without a rebuild, provided the `rules` package supports
-hot-reloading.
-- The rule engine API (`ichiban/prolog`) in `internal/rules/engine.go` is written
-against the concept of a `database/sql`-like interface for that library; check the exact names
-of the methods against the version you lock in `go.mod` — the API varies slightly
-between versions.
-- The timeout for Prolog evaluation (`rules.Engine.timeout`) is a necessary safeguard
-against runaway backtracking on pathological input.
+### For colleagues who do not know Prolog
+- clear JSON outputs,
+- understandable schema overviews,
+- simple usage without knowledge of internal logic.
 
-## Middleware
+### For future growth
+- a visual builder on top of DCG,
+- schema analyzer as a separate service,
+- explain mode for queries,
+- export for documentation and onboarding.
 
-`internal/api/middleware.go` contains two middleware components:
+---
 
-- `LoggingMiddleware` — logs the method, path, status code, duration
-and client IP for each request. Applied globally in `NewRouter`.
-- `RateLimiter` — a per-client token bucket (`golang.org/x/time/rate`),
-  keyed by IP (or `X-Forwarded-For` behind a proxy). Inactive limiters
-  are released from memory after `ttl`. Applied only to `/v1/search`, not to
-  `/healthz`. Configuration in `configs/config.yaml` under `rate_limit`.
+## Suggested future work
+
+- connect to real OpenSearch mapping endpoints,
+- extend the DCG syntax with grouping, negation, and aggregations,
+- add recommendations and warnings to the schema analyzer,
+- split schema analysis into a separate service if it grows,
+- add examples and diagrams to the repository.
+
+---
+
+## Short summary
+
+This project is a gateway and logic layer over OpenSearch that combines:
+
+- readable query syntax,
+- parser and DSL builder,
+- rule engine,
+- schema analysis,
+- API for large log datasets.
+
+It is designed to be practical for production while still being understandable for a team that does not work with Prolog.
 
