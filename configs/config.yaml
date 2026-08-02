@@ -1,0 +1,18 @@
+server:
+  addr: ":8080"
+
+opensearch:
+  addresses:
+    - "https://localhost:9200"
+  username: "admin"
+  password: "admin"
+  index: "documents"
+
+rules:
+  bootstrap_file: "internal/rules/bootstrap.pl"
+  timeout: 200ms
+
+rate_limit:
+  rps: 5      # povolených požadavků za sekundu na klienta (IP)
+  burst: 10   # velikost burstu nad rámec rps
+  ttl: 10m    # jak dlouho se drží limiter neaktivního klienta v paměti

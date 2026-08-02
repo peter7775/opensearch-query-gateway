@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.15.0
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+    ports:
+      - "9200:9200"
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      - opensearch
+    ports:
+      - "8080:8080"
