@@ -2,7 +2,7 @@
 
 A gateway for querying OpenSearch with support for multiple query layers, including a DCG-based parser, DSL builder, rule engine, and schema analysis.
 
-The project is designed for large-scale log search in OpenSearch, including environments with billions of records, where query clarity, validation, performance, and explainable schema inspection are important.
+The project is designed for large-scale search in OpenSearch, including environments with billions of records, where query clarity, validation, performance, and explainable schema inspection are important.
 
 ---
 
@@ -17,15 +17,6 @@ The project provides:
 - a **rules engine** for transformations and validations,
 - a **schema analyzer** for index introspection and human-readable field overviews,
 - an **API gateway** for exposing the functionality over HTTP.
-
----
-
-## Who it is for
-
-- backend developers who need a safe and standardized way to query OpenSearch,
-- analysts and colleagues who do not know Prolog but need readable schema outputs,
-- teams working with large-scale log indices,
-- environments where validation, explain mode, and future visual builders matter.
 
 ---
 
@@ -238,43 +229,13 @@ Returns a human-readable JSON overview of an index schema.
 
 ## Why it fits large OpenSearch clusters
 
-This project is suitable for environments with billions of log documents because it:
+This project is suitable for environments with billions of documents because it:
 
 - simplifies query creation and validation,
 - supports readable query syntax,
 - allows automatic rule-based rewriting,
 - provides a human-readable view of schema,
 - can grow into autocomplete, explain mode, and a visual builder.
-
----
-
-## What it brings to the team
-
-### For developers
-- less manual JSON DSL assembly,
-- better validation and testability,
-- cleaner separation of responsibilities.
-
-### For colleagues who do not know Prolog
-- clear JSON outputs,
-- understandable schema overviews,
-- simple usage without knowledge of internal logic.
-
-### For future growth
-- a visual builder on top of DCG,
-- schema analyzer as a separate service,
-- explain mode for queries,
-- export for documentation and onboarding.
-
----
-
-## Suggested future work
-
-- connect to real OpenSearch mapping endpoints,
-- extend the DCG syntax with grouping, negation, and aggregations,
-- add recommendations and warnings to the schema analyzer,
-- split schema analysis into a separate service if it grows,
-- add examples and diagrams to the repository.
 
 ---
 
@@ -286,7 +247,7 @@ This project is a gateway and logic layer over OpenSearch that combines:
 - parser and DSL builder,
 - rule engine,
 - schema analysis,
-- API for large log datasets.
+- API for large datasets.
 
 It is designed to be practical for production while still being understandable for a team that does not work with Prolog.
 
