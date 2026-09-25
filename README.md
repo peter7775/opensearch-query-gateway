@@ -290,3 +290,11 @@ This project is a gateway and logic layer over OpenSearch that combines:
 
 It is designed to be practical for production while still being understandable for a team that does not work with Prolog.
 
+---
+
+## License
+
+This project is free for non-commercial use. Commercial use requires a paid
+license. See [LICENSE](LICENSE) for full terms, or contact
+petrstepanek99@proton.me to obtain a commercial license.
+
