@@ -4,14 +4,35 @@ services:
     environment:
       - discovery.type=single-node
       - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
       - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Jednorázově vytvoří index "documents" a nahraje ukázková data.
+  seed:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    volumes:
+      - ./seed:/seed:ro
+    entrypoint: ["/bin/sh", "/seed/seed.sh", "http://opensearch:9200"]
 
   gateway:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     depends_on:
-      - opensearch
+      opensearch:
+        condition: service_healthy
+    environment:
+      - GATEWAY_OPENSEARCH_ADDRESSES=http://opensearch:9200
+      - GATEWAY_OPENSEARCH_INDEX=documents
     ports:
       - "8080:8080"

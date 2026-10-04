@@ -17,6 +17,9 @@ const (
 	TokenBar
 	TokenLParen
 	TokenRParen
+	// TokenIllegal je neznámý znak nebo neukončený řetězec — parser ho
+	// hlásí jako chybu místo tichého ukončení vstupu.
+	TokenIllegal
 )
 
 type Token struct {
@@ -53,9 +56,19 @@ func (l *Lexer) next() rune {
 	return ch
 }
 
+// skipSpaces přeskočí bílé znaky a řádkové komentáře (% … do konce řádku).
 func (l *Lexer) skipSpaces() {
-	for !l.eof() && unicode.IsSpace(l.peek()) {
-		l.pos++
+	for !l.eof() {
+		switch ch := l.peek(); {
+		case unicode.IsSpace(ch):
+			l.pos++
+		case ch == '%':
+			for !l.eof() && l.peek() != '\n' {
+				l.pos++
+			}
+		default:
+			return
+		}
 	}
 }
 
@@ -87,11 +100,16 @@ func (l *Lexer) NextToken() Token {
 		l.pos++
 		var b strings.Builder
 		for !l.eof() && l.peek() != '"' {
-			b.WriteRune(l.next())
+			ch := l.next()
+			if ch == '\\' && !l.eof() {
+				ch = l.next()
+			}
+			b.WriteRune(ch)
 		}
-		if !l.eof() {
-			l.pos++
+		if l.eof() {
+			return Token{Type: TokenIllegal, Value: "unterminated string", Pos: start}
 		}
+		l.pos++
 		return Token{Type: TokenString, Value: b.String(), Pos: start}
 	case '-':
 		if l.pos+2 < len(l.input) && l.input[l.pos+1] == '-' && l.input[l.pos+2] == '>' {
@@ -114,6 +132,6 @@ func (l *Lexer) NextToken() Token {
 		return Token{Type: TokenIdent, Value: b.String(), Pos: start}
 	}
 
-	l.pos++
-	return Token{Type: TokenEOF, Pos: start}
+	ch := l.next()
+	return Token{Type: TokenIllegal, Value: string(ch), Pos: start}
 }

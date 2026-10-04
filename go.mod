@@ -1,4 +1,4 @@
-module github.com/example/opensearch-query-gateway
+module github.com/peter7775/opensearch-query-gateway
 
 go 1.22
 

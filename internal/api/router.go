@@ -2,20 +2,31 @@ package api
 
 import "net/http"
 
-// NewRouter sestaví HTTP routy služby. Logging je zapnutý globálně, rate
-// limiting jen na /v1/search — health check endpoint zůstává neomezený,
-// aby ho throttling nezasahoval (load balancery/orchestrátory ho volají
-// často a nezávisle na provozu API). Pro bohatší routing nebo další
-// middleware (auth, tracing) vyměňte http.ServeMux za chi/gin.
-func NewRouter(h *SearchHandler, limiter *RateLimiter) http.Handler {
+// NewRouter sestaví HTTP routy služby. Logging, request ID a recover jsou
+// zapnuté globálně, rate limiting jen na API endpointy — health check
+// endpointy zůstávají neomezené, aby je throttling nezasahoval (load
+// balancery/orchestrátory je volají často a nezávisle na provozu API).
+//
+// Využívá method-aware vzory http.ServeMux z Go 1.22 ("POST /v1/search").
+func NewRouter(s *Server, limiter *RateLimiter, clientIP KeyFunc) http.Handler {
+	if clientIP == nil {
+		clientIP = ClientIP(false)
+	}
 	mux := http.NewServeMux()
 
-	searchHandler := Chain(http.HandlerFunc(h.Handle), limiter.Middleware)
-	mux.Handle("/v1/search", searchHandler)
+	limited := func(h http.HandlerFunc) http.Handler {
+		return Chain(h, limiter.Middleware)
+	}
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.Handle("POST /v1/search", limited(s.Search))
+	mux.Handle("POST /v1/translate", limited(s.Translate))
+	mux.Handle("GET /v1/schema/introspect", limited(s.Introspect))
+	mux.Handle("POST /v1/schema/introspect", limited(s.Introspect))
+	mux.Handle("GET /v1/schema/prolog", limited(s.PrologFacts))
+	mux.Handle("POST /v1/schema/prolog", limited(s.PrologFacts))
 
-	return LoggingMiddleware(mux)
+	mux.HandleFunc("GET /healthz", s.Healthz)
+	mux.HandleFunc("GET /readyz", s.Readyz)
+
+	return Chain(mux, RequestIDMiddleware, LoggingMiddleware(clientIP), RecoverMiddleware)
 }

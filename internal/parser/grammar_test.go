@@ -217,3 +217,47 @@ func TestWalkClausesMutation(t *testing.T) {
 		t.Fatal("expected in-place mutation of clause field to persist in the tree")
 	}
 }
+
+func TestParseLowercaseKeywords(t *testing.T) {
+	q, err := New().Parse(`service:gateway and severity:error or not tag:x`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(q.Root.Right) != 1 || !q.Root.Right[0].Right.Left.Not {
+		t.Fatalf("lowercase or/not not recognised: %+v", q.Root)
+	}
+}
+
+func TestParseCompare(t *testing.T) {
+	for in, op := range map[string]string{`v:>1`: ">", `v:>=1`: ">=", `v:<1`: "<", `v:<=1`: "<="} {
+		q, err := New().Parse(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		c := q.Root.Left.Left.Primary.Clause
+		if c.Value.Compare == nil || c.Value.Compare.Op != op || c.Op() != "range" {
+			t.Errorf("%s: unexpected %+v", in, c.Value)
+		}
+	}
+}
+
+func TestParseRelativeTime(t *testing.T) {
+	q, err := New().Parse(`last:15m`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := q.Root.Left.Left.Primary.Clause
+	if d, ok := c.Duration(); !c.IsRelativeTime() || !ok || d != "15m" {
+		t.Errorf("unexpected relative clause %+v", c)
+	}
+	q, _ = New().Parse(`last:soon`)
+	if _, ok := q.Root.Left.Left.Primary.Clause.Duration(); ok {
+		t.Error("last:soon must not be a valid duration")
+	}
+}
+
+func TestParseEmpty(t *testing.T) {
+	if _, err := New().Parse("   "); err != ErrEmptyQuery {
+		t.Errorf("expected ErrEmptyQuery, got %v", err)
+	}
+}

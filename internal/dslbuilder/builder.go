@@ -4,21 +4,85 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/example/opensearch-query-gateway/internal/parser"
+	"github.com/peter7775/opensearch-query-gateway/internal/parser"
 )
 
-// Builder převádí normalizované AST na OpenSearch Query DSL dokument.
-type Builder struct{}
+// DefaultTimeField je výchozí časové pole pro relativní filtr last:<duration>.
+const DefaultTimeField = "@timestamp"
 
-func New() *Builder {
-	return &Builder{}
+// Builder převádí normalizované AST na OpenSearch Query DSL dokument.
+type Builder struct {
+	timeField string
 }
 
-// Build sestaví kompletní tělo požadavku pro OpenSearch _search endpoint.
+// Option konfiguruje Builder.
+type Option func(*Builder)
+
+// WithTimeField nastaví pole, nad kterým se vyhodnocuje last:<duration>.
+func WithTimeField(field string) Option {
+	return func(b *Builder) {
+		if field != "" {
+			b.timeField = field
+		}
+	}
+}
+
+func New(opts ...Option) *Builder {
+	b := &Builder{timeField: DefaultTimeField}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
+}
+
+// TimeField vrátí časové pole používané pro relativní filtry.
+func (b *Builder) TimeField() string { return b.timeField }
+
+// Build sestaví tělo požadavku pro OpenSearch _search endpoint (jen query).
 func (b *Builder) Build(q *parser.Query) map[string]interface{} {
 	return map[string]interface{}{
 		"query": b.expression(q.Root),
 	}
+}
+
+// SortField je jedno kritérium řazení.
+type SortField struct {
+	Field string
+	Desc  bool
+}
+
+// Page popisuje stránkování a řazení výsledků.
+type Page struct {
+	Size  int
+	From  int
+	Sort  []SortField
+	Track bool // track_total_hits: true (přesný počet i nad 10 000 dokumentů)
+}
+
+// BuildSearch sestaví kompletní tělo _search včetně stránkování a řazení.
+func (b *Builder) BuildSearch(q *parser.Query, p Page) map[string]interface{} {
+	body := b.Build(q)
+	if p.Size >= 0 {
+		body["size"] = p.Size
+	}
+	if p.From > 0 {
+		body["from"] = p.From
+	}
+	if len(p.Sort) > 0 {
+		sort := make([]map[string]interface{}, 0, len(p.Sort))
+		for _, s := range p.Sort {
+			order := "asc"
+			if s.Desc {
+				order = "desc"
+			}
+			sort = append(sort, map[string]interface{}{s.Field: map[string]interface{}{"order": order}})
+		}
+		body["sort"] = sort
+	}
+	if p.Track {
+		body["track_total_hits"] = true
+	}
+	return body
 }
 
 // expression řeší OR (nejnižší precedence). Pokud je jen jeden operand,
@@ -69,12 +133,14 @@ func (b *Builder) and(a *parser.AndExpr) map[string]interface{} {
 		return must[0]
 	}
 
-	return map[string]interface{}{
-		"bool": map[string]interface{}{
-			"must":     must,
-			"must_not": mustNot,
-		},
+	boolQ := map[string]interface{}{}
+	if len(must) > 0 {
+		boolQ["must"] = must
 	}
+	if len(mustNot) > 0 {
+		boolQ["must_not"] = mustNot
+	}
+	return map[string]interface{}{"bool": boolQ}
 }
 
 // primary rozbalí buď vnořenou skupinu v závorkách, nebo listovou klauzuli.
@@ -88,9 +154,17 @@ func (b *Builder) primary(p *parser.Primary) map[string]interface{} {
 func (b *Builder) clause(c *parser.Clause) map[string]interface{} {
 	boost := boostFactor(c.Value.Boost)
 
+	if c.IsRelativeTime() {
+		d, _ := c.Duration()
+		return b.rangeParams(b.timeField, map[string]interface{}{"gte": "now-" + d}, boost)
+	}
+
 	switch {
 	case c.Value.Range != nil:
 		return b.rangeClause(c.Field, c.Value.Range, boost)
+
+	case c.Value.Compare != nil:
+		return b.compareClause(c.Field, c.Value.Compare, boost)
 
 	case c.Value.Phrase != nil:
 		return b.phraseClause(c.Field, *c.Value.Phrase, c.Value.Fuzzy, boost)
@@ -110,11 +184,26 @@ func (b *Builder) clause(c *parser.Clause) map[string]interface{} {
 	}
 }
 
+// rangeClause sestaví range query; hranice "*" znamená otevřený interval.
 func (b *Builder) rangeClause(field string, r *parser.Range, boost *float64) map[string]interface{} {
-	params := map[string]interface{}{
-		"gte": r.Min,
-		"lte": r.Max,
+	params := map[string]interface{}{}
+	if r.Min != "*" && r.Min != "" {
+		params["gte"] = r.Min
 	}
+	if r.Max != "*" && r.Max != "" {
+		params["lte"] = r.Max
+	}
+	return b.rangeParams(field, params, boost)
+}
+
+var compareOps = map[string]string{">": "gt", ">=": "gte", "<": "lt", "<=": "lte"}
+
+// compareClause přeloží field:>N apod. na jednostrannou range query.
+func (b *Builder) compareClause(field string, c *parser.Compare, boost *float64) map[string]interface{} {
+	return b.rangeParams(field, map[string]interface{}{compareOps[c.Op]: c.Value}, boost)
+}
+
+func (b *Builder) rangeParams(field string, params map[string]interface{}, boost *float64) map[string]interface{} {
 	if boost != nil {
 		params["boost"] = *boost
 	}

@@ -32,6 +32,9 @@ func (p *Parser) ParseRules() ([]Rule, error) {
 }
 
 func (p *Parser) parseRule() (Rule, error) {
+	if p.cur.Type == TokenIllegal {
+		return Rule{}, &ParseError{Pos: p.cur.Pos, Msg: "unexpected " + p.cur.Value}
+	}
 	head, err := p.parseIdent()
 	if err != nil {
 		return Rule{}, err
@@ -47,6 +50,9 @@ func (p *Parser) parseRule() (Rule, error) {
 	}
 
 	if p.cur.Type != TokenDot {
+		if p.cur.Type == TokenIllegal {
+			return Rule{}, &ParseError{Pos: p.cur.Pos, Msg: "unexpected " + p.cur.Value}
+		}
 		return Rule{}, &ParseError{Pos: p.cur.Pos, Msg: "expected ."}
 	}
 	p.advance()
@@ -111,6 +117,19 @@ func (p *Parser) parseItem() (Expr, error) {
 		v := p.cur.Value
 		p.advance()
 		return Terminal{Value: v}, nil
+	case TokenLParen:
+		p.advance()
+		e, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.cur.Type != TokenRParen {
+			return nil, &ParseError{Pos: p.cur.Pos, Msg: "expected )"}
+		}
+		p.advance()
+		return e, nil
+	case TokenIllegal:
+		return nil, &ParseError{Pos: p.cur.Pos, Msg: "unexpected " + p.cur.Value}
 	default:
 		return nil, &ParseError{Pos: p.cur.Pos, Msg: "expected symbol or string"}
 	}

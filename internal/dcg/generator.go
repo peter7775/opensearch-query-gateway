@@ -35,7 +35,7 @@ func (g *Generator) genExpr(e Expr, in, out string) string {
 	case Symbol:
 		return fmt.Sprintf("%s(%s,%s)", v.Name, in, out)
 	case Terminal:
-		return fmt.Sprintf("%s = [%q|%s]", in, v.Value, out)
+		return fmt.Sprintf("%s = [%s|%s]", in, quoteAtom(v.Value), out)
 	case Seq:
 		return g.genSeq(v.Items, in, out)
 	case Alt:
@@ -71,5 +71,28 @@ func (g *Generator) genAlt(opts []Expr, in, out string) string {
 	for _, opt := range opts {
 		parts = append(parts, g.genExpr(opt, in, out))
 	}
-	return strings.Join(parts, " ; ")
+	// Závorky jsou nutné: ',' má v Prologu vyšší prioritu než ';', takže
+	// bez nich by "a, (b | c)" zkompilované jako "a, b ; c" znamenalo
+	// "(a, b) ; c".
+	return "(" + strings.Join(parts, " ; ") + ")"
+}
+
+// quoteAtom vrátí terminál jako Prolog atom v apostrofech (tokeny vstupu
+// jsou atomy, ne code listy jako u "…" v ISO Prologu).
+func quoteAtom(s string) string {
+	esc := strings.ReplaceAll(s, `\`, `\\`)
+	esc = strings.ReplaceAll(esc, "'", `\'`)
+	return "'" + esc + "'"
+}
+
+// Compile přeloží zdrojový text DCG gramatiky (pravidla "head --> body.")
+// na Prolog klauzule s explicitními rozdílovými seznamy. Výsledek lze
+// načíst do rule enginu (soubory s příponou .dcg v rules.schema_files nebo
+// rules.New je zkompilují automaticky) a volat např. jako query(Tokens, []).
+func Compile(src string) (string, error) {
+	rules, err := NewParser(src).ParseRules()
+	if err != nil {
+		return "", err
+	}
+	return NewGenerator().Generate(rules)
 }

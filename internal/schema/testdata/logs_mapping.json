@@ -1,0 +1,23 @@
+{
+  "logs": {
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date", "format": "strict_date_optional_time||epoch_millis" },
+        "service":    { "type": "keyword" },
+        "severity":   { "type": "keyword" },
+        "message":    { "type": "text", "analyzer": "standard",
+                        "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } },
+        "http": {
+          "properties": {
+            "status":     { "type": "integer" },
+            "user_agent": { "type": "keyword", "index": false, "doc_values": false }
+          }
+        },
+        "tags": {
+          "type": "nested",
+          "properties": { "name": { "type": "keyword" } }
+        }
+      }
+    }
+  }
+}

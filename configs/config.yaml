@@ -1,16 +1,36 @@
 server:
   addr: ":8080"
+  # Zapněte jen za důvěryhodnou reverzní proxy (čte X-Forwarded-For / X-Real-IP).
+  trust_proxy_headers: false
+  max_body_bytes: 1048576
 
 opensearch:
   addresses:
-    - "https://localhost:9200"
-  username: "admin"
-  password: "admin"
+    - "http://localhost:9200"
+  # Přihlašovací údaje raději přes GATEWAY_OPENSEARCH_USERNAME / _PASSWORD.
+  username: ""
+  password: ""
+  insecure_skip_verify: false
+  request_timeout: 10s
   index: "documents"
+  # Další indexy, které smí klient zvolit parametrem "index".
+  allowed_indices: []
+  # Časové pole pro relativní filtr last:15m.
+  time_field: "published_at"
+  purpose: "Sample document index"
 
 rules:
   bootstrap_file: "internal/rules/bootstrap.pl"
+  # Fakta ze schema-export (*.pl) nebo DCG gramatiky (*.dcg).
+  schema_files: []
   timeout: 200ms
+
+search:
+  default_size: 10
+  max_size: 100
+  # Ochrana proti drahému hlubokému stránkování (from + size).
+  max_from: 10000
+  track_total_hits: false
 
 rate_limit:
   rps: 5      # povolených požadavků za sekundu na klienta (IP)

@@ -1,9 +1,12 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,29 +42,75 @@ func (r *statusRecorder) WriteHeader(code int) {
 // klientskou adresu pro každý request. V produkci nahraďte log.Printf
 // strukturovaným logerem (slog/zap) a napojte na tracing span, aby šlo
 // jeden request sledovat přes parser → rules → executor.
-func LoggingMiddleware(next http.Handler) http.Handler {
+func LoggingMiddleware(clientIP KeyFunc) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+
+			next.ServeHTTP(rec, r)
+
+			log.Printf("%s %s %d %s client=%s request_id=%s",
+				r.Method, r.URL.Path, rec.status, time.Since(start), clientIP(r), w.Header().Get("X-Request-ID"))
+		})
+	}
+}
+
+// RequestIDMiddleware převezme X-Request-ID od klienta (pokud je rozumně
+// krátké), jinak vygeneruje nové, a vrátí ho v odpovědi — pro dohledání
+// requestu v logu.
+func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-
-		next.ServeHTTP(rec, r)
-
-		log.Printf("%s %s %d %s client=%s",
-			r.Method, r.URL.Path, rec.status, time.Since(start), clientIP(r))
+		id := r.Header.Get("X-Request-ID")
+		if id == "" || len(id) > 64 {
+			var b [8]byte
+			_, _ = rand.Read(b[:])
+			id = hex.EncodeToString(b[:])
+		}
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r)
 	})
 }
 
-func clientIP(r *http.Request) string {
-	// Za reverzní proxy/load balancerem nastavte důvěryhodně X-Forwarded-For
-	// (nebo X-Real-IP) až na hraně, jinak si klient může IP pro rate limiting podvrhnout.
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return fwd
+// RecoverMiddleware zachytí panic v handleru a vrátí 500 místo pádu spojení.
+func RecoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				log.Printf("panic: %v (%s %s)", v, r.Method, r.URL.Path)
+				writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// KeyFunc určí klíč klienta (typicky IP) pro rate limiting a logování.
+type KeyFunc func(*http.Request) string
+
+// ClientIP vrátí KeyFunc pro určení IP klienta. S trustProxy=true čte
+// X-Forwarded-For (první, tj. původní adresu) a X-Real-IP — zapínejte jen
+// za důvěryhodnou reverzní proxy, jinak si klient může IP podvrhnout
+// a obejít rate limiting.
+func ClientIP(trustProxy bool) KeyFunc {
+	return func(r *http.Request) string {
+		if trustProxy {
+			if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+				first, _, _ := strings.Cut(fwd, ",")
+				if ip := strings.TrimSpace(first); ip != "" {
+					return ip
+				}
+			}
+			if real := strings.TrimSpace(r.Header.Get("X-Real-IP")); real != "" {
+				return real
+			}
+		}
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return r.RemoteAddr
+		}
+		return host
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }
 
 // --- Rate limiting ------------------------------------------------------------
@@ -76,12 +125,18 @@ type RateLimiter struct {
 	rps      rate.Limit
 	burst    int
 	ttl      time.Duration
+	key      KeyFunc
+	stop     chan struct{}
+	once     sync.Once
 }
 
 // NewRateLimiter vytvoří limiter s danou propustností (požadavků/s) a burstem.
 // ttl určuje, jak dlouho se nečinný per-klient limiter drží v paměti, než se
 // uvolní — brání neomezenému růstu mapy při velkém počtu unikátních klientů.
-func NewRateLimiter(rps float64, burst int, ttl time.Duration) *RateLimiter {
+func NewRateLimiter(rps float64, burst int, ttl time.Duration, key KeyFunc) *RateLimiter {
+	if key == nil {
+		key = ClientIP(false)
+	}
 	if rps <= 0 {
 		rps = 5
 	}
@@ -98,6 +153,8 @@ func NewRateLimiter(rps float64, burst int, ttl time.Duration) *RateLimiter {
 		rps:      rate.Limit(rps),
 		burst:    burst,
 		ttl:      ttl,
+		key:      key,
+		stop:     make(chan struct{}),
 	}
 	go rl.cleanupLoop()
 	return rl
@@ -119,7 +176,12 @@ func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
 func (rl *RateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(rl.ttl)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-rl.stop:
+			return
+		case <-ticker.C:
+		}
 		cutoff := time.Now().Add(-rl.ttl)
 		rl.mu.Lock()
 		for key, last := range rl.seen {
@@ -132,14 +194,18 @@ func (rl *RateLimiter) cleanupLoop() {
 	}
 }
 
+// Close zastaví úklidovou goroutinu.
+func (rl *RateLimiter) Close() {
+	rl.once.Do(func() { close(rl.stop) })
+}
+
 // Middleware vrátí http middleware, který každý request omezí podle klienta.
 // Při vyčerpání limitu vrací 429 Too Many Requests s hlavičkou Retry-After.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := clientIP(r)
-		if !rl.getLimiter(key).Allow() {
+		if !rl.getLimiter(rl.key(r)).Allow() {
 			w.Header().Set("Retry-After", "1")
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			writeError(w, http.StatusTooManyRequests, "rate_limited", "rate limit exceeded")
 			return
 		}
 		next.ServeHTTP(w, r)

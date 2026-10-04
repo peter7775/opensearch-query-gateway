@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -9,12 +10,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/opensearch-query-gateway/internal/api"
-	"github.com/example/opensearch-query-gateway/internal/config"
-	"github.com/example/opensearch-query-gateway/internal/dslbuilder"
-	"github.com/example/opensearch-query-gateway/internal/executor"
-	"github.com/example/opensearch-query-gateway/internal/parser"
-	"github.com/example/opensearch-query-gateway/internal/rules"
+	"github.com/peter7775/opensearch-query-gateway/internal/api"
+	"github.com/peter7775/opensearch-query-gateway/internal/config"
+	"github.com/peter7775/opensearch-query-gateway/internal/dslbuilder"
+	"github.com/peter7775/opensearch-query-gateway/internal/executor"
+	"github.com/peter7775/opensearch-query-gateway/internal/parser"
+	"github.com/peter7775/opensearch-query-gateway/internal/rules"
 )
 
 func main() {
@@ -23,36 +24,45 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	p := parser.New()
-
-	re, err := rules.New(cfg.Rules.BootstrapFile, cfg.Rules.Timeout)
+	re, err := rules.New(cfg.Rules.BootstrapFile, cfg.Rules.Timeout, cfg.Rules.SchemaFiles...)
 	if err != nil {
 		log.Fatalf("rules engine: %v", err)
 	}
 	defer re.Close()
-
-	builder := dslbuilder.New()
 
 	osClient, err := executor.NewClient(cfg.OpenSearch)
 	if err != nil {
 		log.Fatalf("opensearch client: %v", err)
 	}
 
-	handler := api.NewSearchHandler(p, re, builder, osClient)
+	server := api.NewServer(
+		parser.New(),
+		re,
+		dslbuilder.New(dslbuilder.WithTimeField(cfg.OpenSearch.TimeField)),
+		osClient,
+		api.Options{
+			OpenSearch:   cfg.OpenSearch,
+			Search:       cfg.Search,
+			MaxBodyBytes: cfg.Server.MaxBodyBytes,
+		},
+	)
 
-	limiter := api.NewRateLimiter(cfg.RateLimit.RPS, cfg.RateLimit.Burst, cfg.RateLimit.TTL)
-	mux := api.NewRouter(handler, limiter)
+	clientIP := api.ClientIP(cfg.Server.TrustProxyHeaders)
+	limiter := api.NewRateLimiter(cfg.RateLimit.RPS, cfg.RateLimit.Burst, cfg.RateLimit.TTL, clientIP)
+	defer limiter.Close()
 
 	srv := &http.Server{
-		Addr:         cfg.Server.Addr,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:              cfg.Server.Addr,
+		Handler:           api.NewRouter(server, limiter, clientIP),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
-		log.Printf("gateway listening on %s", cfg.Server.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("gateway listening on %s (index=%s, opensearch=%v)", cfg.Server.Addr, cfg.OpenSearch.Index, cfg.OpenSearch.Addresses)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("server: %v", err)
 		}
 	}()
@@ -60,6 +70,7 @@ func main() {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	<-stop
+	log.Printf("shutting down")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

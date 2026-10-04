@@ -1,0 +1,12 @@
+{
+  "mappings": {
+    "properties": {
+      "title":        { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } },
+      "created_by":   { "type": "keyword" },
+      "tags":         { "type": "keyword" },
+      "status":       { "type": "keyword" },
+      "views":        { "type": "integer" },
+      "published_at": { "type": "date" }
+    }
+  }
+}

@@ -34,6 +34,11 @@ func (m *Mapper) FromJSON(rootName string, raw []byte) (*IndexSchema, error) {
 	return nil, fmt.Errorf("no properties or mappings.properties found")
 }
 
+// extractProperties podporuje tři tvary vstupu:
+//
+//	{"properties": {...}}                              — holý mapping
+//	{"mappings": {"properties": {...}}}                — tělo create index
+//	{"<index>": {"mappings": {"properties": {...}}}}   — odpověď GET /<index>/_mapping
 func extractProperties(obj map[string]any) (map[string]any, bool) {
 	if props, ok := obj["properties"].(map[string]any); ok {
 		return props, true
@@ -41,6 +46,15 @@ func extractProperties(obj map[string]any) (map[string]any, bool) {
 	if mappings, ok := obj["mappings"].(map[string]any); ok {
 		if props, ok := mappings["properties"].(map[string]any); ok {
 			return props, true
+		}
+	}
+	if len(obj) == 1 {
+		for _, v := range obj {
+			if inner, ok := v.(map[string]any); ok {
+				if _, hasMappings := inner["mappings"]; hasMappings {
+					return extractProperties(inner)
+				}
+			}
 		}
 	}
 	return nil, false
@@ -63,30 +77,28 @@ func (m *Mapper) walkProps(s *IndexSchema, prefix string, props map[string]any) 
 		f := Field{Path: path}
 
 		if t, ok := val["type"].(string); ok {
-			f.Type = t
-			if b, ok := val["index"].(bool); ok {
-				f.Indexed = &b
-			}
-			if b, ok := val["doc_values"].(bool); ok {
-				f.DocValues = &b
-			}
-			if a, ok := val["analyzer"].(string); ok {
-				f.Analyzer = a
-			}
-			if fm, ok := val["format"].(string); ok {
-				f.Format = fm
-			}
-			if ia, ok := val["ignore_above"].(float64); ok {
-				v := int(ia)
-				f.IgnoreAbove = &v
-			}
-			if t == "object" {
-				f.IsObject = true
-			}
-			if t == "nested" {
-				f.IsNested = true
-			}
+			f = fieldFromMapping(path, t, val)
 			s.Fields = append(s.Fields, f)
+
+			// Multi-fields (např. "fields": {"keyword": {"type": "keyword"}})
+			// jsou samostatně dotazovatelná pole s cestou title.keyword.
+			if sub, ok := val["fields"].(map[string]any); ok {
+				subKeys := make([]string, 0, len(sub))
+				for sk := range sub {
+					subKeys = append(subKeys, sk)
+				}
+				sort.Strings(subKeys)
+				for _, sk := range subKeys {
+					sv, _ := sub[sk].(map[string]any)
+					st, _ := sv["type"].(string)
+					if st == "" {
+						continue
+					}
+					sf := fieldFromMapping(path+"."+sk, st, sv)
+					sf.Parent = path
+					s.Fields = append(s.Fields, sf)
+				}
+			}
 		}
 
 		if child, ok := val["properties"].(map[string]any); ok {
@@ -97,6 +109,36 @@ func (m *Mapper) walkProps(s *IndexSchema, prefix string, props map[string]any) 
 			m.walkProps(s, path, child)
 		}
 	}
+}
+
+func fieldFromMapping(path, t string, val map[string]any) Field {
+	f := Field{Path: path, Type: t}
+	if b, ok := val["index"].(bool); ok {
+		f.Indexed = &b
+	}
+	if b, ok := val["doc_values"].(bool); ok {
+		f.DocValues = &b
+	}
+	if b, ok := val["fielddata"].(bool); ok {
+		f.Fielddata = b
+	}
+	if a, ok := val["analyzer"].(string); ok {
+		f.Analyzer = a
+	}
+	if fm, ok := val["format"].(string); ok {
+		f.Format = fm
+	}
+	if ia, ok := val["ignore_above"].(float64); ok {
+		v := int(ia)
+		f.IgnoreAbove = &v
+	}
+	switch t {
+	case "object":
+		f.IsObject = true
+	case "nested":
+		f.IsNested = true
+	}
+	return f
 }
 
 func (s *IndexSchema) HasField(path string) bool {
@@ -117,10 +159,11 @@ func (s *IndexSchema) FieldByPath(path string) (Field, bool) {
 	return Field{}, false
 }
 
+// SearchableFields vrátí cesty polí, nad kterými lze vyhledávat.
 func (s *IndexSchema) SearchableFields() []string {
 	var out []string
 	for _, f := range s.Fields {
-		if f.Type == "text" || f.Type == "keyword" || f.Type == "date" {
+		if f.Searchable() {
 			out = append(out, f.Path)
 		}
 	}

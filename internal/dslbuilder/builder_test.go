@@ -3,7 +3,7 @@ package dslbuilder
 import (
 	"testing"
 
-	"github.com/example/opensearch-query-gateway/internal/parser"
+	"github.com/peter7775/opensearch-query-gateway/internal/parser"
 )
 
 func build(t *testing.T, q string) map[string]interface{} {

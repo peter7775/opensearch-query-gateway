@@ -1,5 +1,10 @@
 package parser
 
+import (
+	"regexp"
+	"strings"
+)
+
 // Query je kořenový uzel naparsovaného dotazu ve vlastním dotazovacím jazyce.
 type Query struct {
 	Root *Expression `parser:"@@"`
@@ -62,12 +67,16 @@ type Clause struct {
 //   - ~N   fuzzy shoda u slova (fuzziness, edit distance) nebo proximity
 //     u fráze (slop) — bez čísla se použije rozumný výchozí (AUTO/2).
 //   - ^N   boost (relevance weight), lze kombinovat s ~N, např. slovo~2^1.5.
+//
+// Porovnání (>, >=, <, <=) je zkratka pro jednostranný rozsah, např.
+// views:>=100 nebo published_at:<2024-01-01.
 type Value struct {
-	Range  *Range  `parser:"(  @@"`
-	Phrase *string `parser:"  | @String"`
-	Word   *string `parser:"  | @Ident )"`
-	Fuzzy  *Fuzzy  `parser:"( \"~\" @@ )?"`
-	Boost  *Boost  `parser:"( \"^\" @@ )?"`
+	Range   *Range   `parser:"(  @@"`
+	Compare *Compare `parser:"  | @@"`
+	Phrase  *string  `parser:"  | @String"`
+	Word    *string  `parser:"  | @Ident )"`
+	Fuzzy   *Fuzzy   `parser:"( \"~\" @@ )?"`
+	Boost   *Boost   `parser:"( \"^\" @@ )?"`
 }
 
 // Fuzzy zachycuje nepovinný modifikátor ~N. Distance je prázdný string,
@@ -83,10 +92,39 @@ type Boost struct {
 	Factor string `parser:"@Ident"`
 }
 
-// Range reprezentuje field:[min TO max] syntaxi.
+// Range reprezentuje field:[min TO max] syntaxi. Hranice * znamená
+// otevřený interval (např. [100 TO *]). Hranice lze zapsat i v uvozovkách,
+// což je potřeba u hodnot s dvojtečkou (ISO časy "2024-01-01T10:00:00").
 type Range struct {
-	Min string `parser:"\"[\" @Ident"`
-	Max string `parser:"\"TO\" @Ident \"]\""`
+	Min string `parser:"\"[\" (@Ident | @String)"`
+	Max string `parser:"\"TO\" (@Ident | @String) \"]\""`
+}
+
+// Compare reprezentuje jednostranné porovnání field:>N, field:>=N, field:<N, field:<=N.
+type Compare struct {
+	Op    string `parser:"@(\">=\" | \"<=\" | \">\" | \"<\")"`
+	Value string `parser:"(@Ident | @String)"`
+}
+
+// RelativeTimeField je pseudo-pole pro relativní časový filtr: last:15m
+// znamená "posledních 15 minut" nad časovým polem nakonfigurovaným v dslbuilderu.
+const RelativeTimeField = "last"
+
+var durationRe = regexp.MustCompile(`^[0-9]+[yMwdhHms]$`)
+
+// IsRelativeTime vrátí true pro klauzuli typu last:15m.
+func (c *Clause) IsRelativeTime() bool {
+	return strings.EqualFold(c.Field, RelativeTimeField)
+}
+
+// Duration vrátí délku relativního časového okna (např. "15m") a jestli je
+// ve formátu, kterému rozumí OpenSearch date math (y, M, w, d, h, H, m, s).
+func (c *Clause) Duration() (string, bool) {
+	if c.Value == nil || c.Value.Word == nil || c.Value.Fuzzy != nil {
+		return "", false
+	}
+	d := *c.Value.Word
+	return d, durationRe.MatchString(d)
 }
 
 // WalkClauses projde celý AST bez ohledu na vnořené závorky a booleovské
@@ -124,8 +162,9 @@ func walkPrimary(p *Primary, fn func(*Clause)) {
 }
 
 // Op vrátí typ operace klauzule pro rule engine ("range" nebo "eq").
+// Porovnání i relativní čas jsou z pohledu validace rozsahové dotazy.
 func (c *Clause) Op() string {
-	if c.Value.Range != nil {
+	if c.Value.Range != nil || c.Value.Compare != nil || c.IsRelativeTime() {
 		return "range"
 	}
 	return "eq"
@@ -138,6 +177,8 @@ func (c *Clause) RawValue() string {
 	switch {
 	case c.Value.Range != nil:
 		base = c.Value.Range.Min + " TO " + c.Value.Range.Max
+	case c.Value.Compare != nil:
+		base = c.Value.Compare.Op + c.Value.Compare.Value
 	case c.Value.Phrase != nil:
 		base = *c.Value.Phrase
 	case c.Value.Word != nil:
