@@ -1,54 +1,52 @@
 # OpenSearch Query Gateway
 
-A gateway for querying OpenSearch with support for multiple query layers, including a DCG-based parser, DSL builder, rule engine, and schema analysis.
+**Query OpenSearch without writing complex JSON.**
 
-The project is designed for large-scale search in OpenSearch, including environments with billions of records, where query clarity, validation, performance, and explainable schema inspection are important.
+A Go HTTP gateway that turns readable search expressions into OpenSearch Query DSL, validates fields with Prolog rules, and helps you inspect index mappings.
 
----
+Use it to give applications and internal tools a consistent search API without duplicating query-building and validation logic in every client.
 
-## What the project solves
+## From a readable query to OpenSearch DSL
 
-The goal of this project is to make OpenSearch easier to work with so that users and other systems do not need to manually assemble complex JSON queries.
+Send a query using the aliases included in the default rules:
 
-The project provides:
-
-- a **DCG parser** for readable query syntax,
-- a **DSL builder** that converts queries into OpenSearch Query DSL,
-- a **rules engine** for transformations and validations,
-- a **schema analyzer** for index introspection and human-readable field overviews,
-- an **API gateway** for exposing the functionality over HTTP.
-
----
-
-## Core concepts
-
-### 1. DCG
-
-DCG is used as a readable query format that can be translated into an internal structure.
-
-Example:
-
-```prolog
-service:gateway and severity:error and last:15m
+```bash
+curl -s http://localhost:8080/v1/translate \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "author:petr AND views:>=100"}'
 ```
 
-### 2. Prolog rules
+The `dsl` field in the response contains:
 
-Prolog acts as the logical layer for rules, validation, and relationship inference.
+```json
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"match": {"created_by": "petr"}},
+        {"range": {"views": {"gte": "100"}}}
+      ]
+    }
+  },
+  "size": 10
+}
+```
 
-Internally it is used for:
-- query transformation,
-- schema validation,
-- explain mode,
-- inference over fields and index relations.
+The gateway normalizes `author` to `created_by` and validates both clauses before building the DSL. `/v1/translate` does not send a search request to OpenSearch; use `/v1/search` to execute the query.
 
-### 3. OpenSearch DSL
+## Why use it?
 
-The final query is generated as standard OpenSearch Query DSL.
+- **Write less JSON:** combine field searches, ranges, relative time windows, fuzzy matches, and Boolean expressions in a compact query language.
+- **Validate before searching:** reject unknown fields and unsupported range operations using configurable rules.
+- **Keep client queries stable:** map friendly field aliases to index field names in one place.
+- **Understand your mappings:** inspect field types, supported operators, and schema notes over HTTP, or export mappings as Prolog facts.
+- **Centralize request limits:** configure allowed indices, pagination bounds, request body limits, and per-client rate limits.
 
-### 4. Schema analyzer
+### When to use this instead of raw Query DSL
 
-The schema analyzer reads OpenSearch mappings and returns a human-readable overview of fields, types, relationships, and recommendations.
+Use the gateway when several clients need the same field aliases, validation rules, and readable query format. Compared with passing user input directly to OpenSearch's native `query_string`, it adds a separate normalization and rule-validation layer and exposes the generated DSL for inspection.
+
+Use raw Query DSL when you need the full OpenSearch feature set, such as aggregations or nested queries. This gateway implements a subset of query operations; it is not a drop-in replacement for the OpenSearch API. You do not need to write Prolog to try the bundled examples.
 
 ---
 
@@ -317,29 +315,13 @@ Credentials: `-user`/`-pass` or `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`;
 
 ---
 
-## Why it fits large OpenSearch clusters
+## Scope and performance
 
-This project is suitable for environments with billions of documents because it:
+The gateway builds and validates queries; OpenSearch executes them. Search performance still depends on your mappings, query patterns, shard layout, hardware, and data volume. No large-cluster benchmark results are provided here.
 
-- simplifies query creation and validation,
-- supports readable query syntax,
-- allows automatic rule-based rewriting,
-- provides a human-readable view of schema,
-- can grow into autocomplete, explain mode, and a visual builder.
+Pagination bounds and request rate limits help constrain client requests, but do not guarantee that every accepted query is inexpensive. Benchmark representative workloads against your own cluster before production use.
 
----
-
-## Short summary
-
-This project is a gateway and logic layer over OpenSearch that combines:
-
-- readable query syntax,
-- parser and DSL builder,
-- rule engine,
-- schema analysis,
-- API for large datasets.
-
-It is designed to be practical for production while still being understandable for a team that does not work with Prolog.
+The user-facing query parser is written in Go with participle. Prolog handles field aliases and validation rules; optional `.dcg` files are compiled into Prolog for additional grammar-based rules.
 
 ---
 
