@@ -373,7 +373,9 @@ The user-facing query parser is written in Go with participle. Prolog handles fi
 
 ## License
 
-This project is free for non-commercial use. Commercial use requires a paid
-license. See [LICENSE](LICENSE) for full terms, or contact
-petrstepanek99@proton.me to obtain a commercial license.
+This project is licensed under the [MIT License](LICENSE). You may use, modify,
+and redistribute it, including in commercial and proprietary products, without
+a paid license. Retain the copyright and permission notice in copies or
+substantial portions of the software. The software is provided without warranty;
+see [LICENSE](LICENSE) for the full terms.
 
