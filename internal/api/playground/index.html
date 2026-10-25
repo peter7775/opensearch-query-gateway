@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Try readable OpenSearch queries. Inspect generated Query DSL, field aliases, and validation errors without a search cluster.">
+  <title>Query Playground · OpenSearch Query Gateway</title>
+  <link rel="stylesheet" href="/assets/playground.css">
+  <script src="/assets/playground.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">OQG <span>/ Query Playground</span></a>
+    <a href="https://github.com/peter7775/opensearch-query-gateway" target="_blank" rel="noopener noreferrer">View on GitHub ↗</a>
+  </header>
+  <main>
+    <section class="intro">
+      <span class="eyebrow">READABLE QUERY → OPENSEARCH DSL</span>
+      <h1>Less JSON.<br>More searching.</h1>
+      <p>Write a query. See how it becomes OpenSearch DSL.<br>Real parsing, field normalization, and Prolog validation. No cluster required.</p>
+      <span class="badge">Translation only · No searches executed</span>
+    </section>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="input-heading">
+        <div class="panel-heading"><h2 id="input-heading">01 / Your query</h2><span>Readable syntax</span></div>
+        <form id="query-form">
+          <label for="query">Search expression</label>
+          <textarea id="query" name="query" rows="6" spellcheck="false" maxlength="8000" aria-describedby="query-help">author:petr AND views:>=100</textarea>
+          <p class="hint" id="query-help">Combine clauses with AND, OR, NOT and parentheses.</p>
+          <div class="actions"><button type="submit" id="translate">Translate query →</button><span class="hint">Ctrl / ⌘ + Enter</span></div>
+        </form>
+        <h3>Start with an example</h3>
+        <div class="examples" id="examples">
+          <button type="button" data-query="author:petr AND views:>=100">Aliases + range</button>
+          <button type="button" data-query="(tag:golang OR tag:go) AND NOT status:archived">Boolean logic</button>
+          <button type="button" data-query="tag:go* AND last:15m">Wildcard + time</button>
+          <button type="button" data-query='title:"query dsl"~3'>Phrase + proximity</button>
+          <button type="button" data-query="title:golnag~1^2">Fuzzy + boost</button>
+          <button type="button" data-query="title:>=100">Try a rejected query</button>
+        </div>
+        <details>
+          <summary>Syntax &amp; default fields</summary>
+          <p><code>field:value</code> match · <code>field:"some words"</code> phrase · <code>views:[100 TO 500]</code> range · <code>last:15m</code> time window.</p>
+          <p>Default fields: <code>title</code>, <code>created_by</code>, <code>tags</code>, <code>status</code>, <code>views</code>, <code>published_at</code>, <code>@timestamp</code>.</p>
+          <p>Aliases: <code>author → created_by</code>, <code>tag → tags</code>, <code>ts → @timestamp</code>. Fields depend on the server's configured rules; relative time uses its configured time field.</p>
+        </details>
+      </section>
+      <section class="panel result-panel" aria-labelledby="output-heading">
+        <div class="panel-heading"><h2 id="output-heading">02 / Generated DSL</h2><button type="button" class="secondary" id="copy" disabled>Copy JSON</button></div>
+        <p id="status" role="status" aria-live="polite">Ready to translate.</p>
+        <pre id="output" tabindex="0" aria-label="Generated DSL or error details"><code id="dsl">Your generated OpenSearch query will appear here.</code></pre>
+        <div class="normalization"><h3>Field normalization</h3><ul id="normalized"><li>Translate a query to inspect field aliases.</li></ul></div>
+      </section>
+    </div>
+    <footer>Built with Go + Prolog. This playground translates a subset of Query DSL; it does not execute queries or access index data.</footer>
+  </main>
+</body>
+</html>

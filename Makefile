@@ -1,11 +1,14 @@
-.PHONY: run build test test-race vet fmt lint tidy schema-export docker-up docker-down seed
+.PHONY: run playground build test test-race vet fmt lint tidy schema-export docker-up docker-down seed
 
 run:
 	go run ./cmd/gateway
+playground:
+	go run ./cmd/playground
 
 build:
 	go build -o bin/gateway ./cmd/gateway
 	go build -o bin/schema-export ./cmd/schema-export
+	go build -o bin/playground ./cmd/playground
 
 test:
 	go test ./...

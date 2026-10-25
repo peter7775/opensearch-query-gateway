@@ -50,7 +50,45 @@ Use raw Query DSL when you need the full OpenSearch feature set, such as aggrega
 
 ---
 
-## Quick start
+## Try the query playground (no OpenSearch required)
+
+```bash
+make playground
+```
+
+Open **http://localhost:8080** to edit queries, try examples, inspect generated
+DSL and field aliases, and see validation errors. Translate with the button or
+**Ctrl/Cmd + Enter**, then copy the JSON. The UI is embedded in the Go binary;
+no Node.js or frontend build is needed.
+
+The standalone playground exposes only the UI, `POST /v1/translate`,
+`GET /healthz`, and `GET /readyz`. It never creates an OpenSearch client and
+does not expose search or schema endpoints. Both health probes check the
+playground process, not cluster availability.
+
+It uses the same configuration and rules as the gateway; the default examples
+assume the bundled rules and `documents` index. OpenSearch connection settings
+remain in the shared config but no cluster needs to be running.
+
+To use a different local port:
+
+```bash
+GATEWAY_SERVER_ADDR=127.0.0.1:8081 make playground
+```
+
+Or build a standalone demo container:
+
+```bash
+docker build -f deploy/Dockerfile.playground -t oqg-playground .
+docker run --rm -p 127.0.0.1:8080:8080 oqg-playground
+```
+
+For public hosting, deploy this playground image rather than the full gateway,
+put it behind HTTPS, and retain request/rate limits. Trust proxy headers only
+behind a trusted reverse proxy. Clipboard copying requires HTTPS or localhost;
+otherwise select and copy the output manually.
+
+## Quick start (full gateway)
 
 ```bash
 # OpenSearch + sample data + gateway
@@ -239,6 +277,7 @@ Prolog by `internal/dcg` before loading, so you can add grammar-based checks
 ```text
 cmd/
   gateway/         HTTP service
+  playground/      translation-only web demo (no cluster required)
   schema-export/   mapping → Prolog facts / JSON overview (file or live cluster)
 configs/           config.yaml
 deploy/            Dockerfile, docker-compose, seed data
@@ -261,7 +300,14 @@ internal/
 make test        # go test ./...
 make test-race
 make lint        # go vet + gofmt check
-make build       # bin/gateway, bin/schema-export
+make build       # bin/gateway, bin/schema-export, bin/playground
+make playground  # web demo on http://localhost:8080
+```
+
+Optional frontend behavior tests (Node.js 18+; no packages to install):
+
+```bash
+node --test tests/playground.test.cjs
 ```
 
 ---
